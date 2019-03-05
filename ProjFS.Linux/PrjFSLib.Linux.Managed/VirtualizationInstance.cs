@@ -206,7 +206,7 @@ namespace PrjFSLib.Linux
             throw new NotImplementedException();
         }
 
-        private static string GetProcCmdline(int pid)
+        public static string GetProcCmdline(int pid)
         {
             using (var stream = System.IO.File.OpenText(string.Format("/proc/{0}/cmdline", pid)))
             {
