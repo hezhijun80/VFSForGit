@@ -1,18 +1,19 @@
 using GVFS.Common;
 using GVFS.Common.FileSystem;
+using GVFS.Common.Tracing;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
 
-namespace GVFS.Platform.Linux
+namespace GVFS.Platform.POSIX
 {
-    public partial class LinuxFileSystem : IPlatformFileSystem
+    public partial class POSIXFileSystem : IPlatformFileSystem
     {
         public bool SupportsFileMode { get; } = true;
 
         public void FlushFileBuffers(string path)
         {
-            // TODO(Linux): Use native API to flush file
+            // TODO(POSIX): Use native API to flush file
         }
 
         public void MoveAndOverwriteFile(string sourceFileName, string destinationFilename)
@@ -25,18 +26,18 @@ namespace GVFS.Platform.Linux
 
         public void CreateHardLink(string newFileName, string existingFileName)
         {
-            // TODO(Linux): Use native API to create a hardlink
+            // TODO(POSIX): Use native API to create a hardlink
             File.Copy(existingFileName, newFileName);
         }
 
         public void ChangeMode(string path, ushort mode)
         {
-           Chmod(path, mode);
+            Chmod(path, mode);
         }
 
         public bool TryGetNormalizedPath(string path, out string normalizedPath, out string errorMessage)
         {
-            return LinuxFileSystem.TryGetNormalizedPathImplementation(path, out normalizedPath, out errorMessage);
+            return POSIXFileSystem.TryGetNormalizedPathImplementation(path, out normalizedPath, out errorMessage);
         }
 
         public bool HydrateFile(string fileName, byte[] buffer)
@@ -54,6 +55,16 @@ namespace GVFS.Platform.Linux
         {
             NativeStat.StatBuffer statBuffer = this.StatFile(fileName);
             return NativeStat.IsSock(statBuffer.Mode);
+        }
+
+        public bool TryCreateDirectoryWithAdminAndUserModifyPermissions(string directoryPath, out string error)
+        {
+            throw new NotImplementedException();
+        }
+
+        public bool TryCreateOrUpdateDirectoryToAdminModifyPermissions(ITracer tracer, string directoryPath, out string error)
+        {
+            throw new NotImplementedException();
         }
 
         [DllImport("libc", EntryPoint = "chmod", SetLastError = true)]

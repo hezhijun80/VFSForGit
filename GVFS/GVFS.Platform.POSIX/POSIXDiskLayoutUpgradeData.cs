@@ -1,9 +1,9 @@
 using GVFS.Common;
 using GVFS.DiskLayoutUpgrades;
 
-namespace GVFS.Platform.Linux
+namespace GVFS.Platform.POSIX
 {
-    public class LinuxDiskLayoutUpgradeData : IDiskLayoutUpgradeData
+    public class POSIXDiskLayoutUpgradeData : IDiskLayoutUpgradeData
     {
         public DiskLayoutUpgrade[] Upgrades
         {
@@ -12,6 +12,11 @@ namespace GVFS.Platform.Linux
                 return new DiskLayoutUpgrade[0];
             }
         }
+
+        public DiskLayoutVersion Version => new DiskLayoutVersion(
+            currentMajorVersion: 18,
+            currentMinorVersion: 0,
+            minimumSupportedMajorVersion: 18);
 
         public bool TryParseLegacyDiskLayoutVersion(string dotGVFSPath, out int majorVersion)
         {
