@@ -1,16 +1,15 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using Mono.Unix.Native;
 
 namespace PrjFSLib.Linux
 {
     public class VirtualizationInstance
     {
-        public const int PlaceholderIdLength = Interop.PrjFSLib.PlaceholderIdLength;
+        public const int PlaceholderIdLength = 128;
 
-        private IntPtr mountHandle = IntPtr.Zero;
-
-        // We must hold a reference to the delegate to prevent garbage collection
-        private NotifyOperationCallback preventGCOnNotifyOperationDelegate;
+        private Interop.ProjFS projfs;
 
         // References held to these delegates via class properties
         public virtual EnumerateDirectoryCallback OnEnumerateDirectory { get; set; }
@@ -27,49 +26,75 @@ namespace PrjFSLib.Linux
             string virtualizationRootFullPath,
             uint poolThreadCount)
         {
-            if (this.mountHandle != IntPtr.Zero)
+            if (this.projfs != null)
             {
                 throw new InvalidOperationException();
             }
 
-            Interop.Callbacks callbacks = new Interop.Callbacks
+            Interop.ProjFS.Handlers handlers = new Interop.ProjFS.Handlers
             {
-                OnEnumerateDirectory = this.OnEnumerateDirectory,
-                OnGetFileStream = this.OnGetFileStream,
-                OnNotifyOperation = this.preventGCOnNotifyOperationDelegate = new NotifyOperationCallback(this.OnNotifyOperation),
+                HandleProjEvent = this.HandleProjEvent,
+                HandleNotifyEvent = this.HandleNotifyEvent,
+                HandlePermEvent = this.HandlePermEvent,
             };
 
-            return Interop.PrjFSLib.StartVirtualizationInstance(
+            Interop.ProjFS fs = Interop.ProjFS.New(
                 storageRootFullPath,
                 virtualizationRootFullPath,
-                callbacks,
-                poolThreadCount,
-                ref this.mountHandle);
+                handlers);
+
+            if (fs == null)
+            {
+                return Result.Invalid;
+            }
+
+            if (fs.Start() != 0)
+            {
+                fs.Stop();
+                return Result.Invalid;
+            }
+
+            this.projfs = fs;
+            return Result.Success;
         }
 
         public virtual void StopVirtualizationInstance()
         {
-            Interop.PrjFSLib.StopVirtualizationInstance(this.mountHandle);
-            this.mountHandle = IntPtr.Zero;
+            if (this.projfs == null)
+            {
+                return;
+            }
+
+            this.projfs.Stop();
+            this.projfs = null;
         }
 
         public virtual Result WriteFileContents(
-            IntPtr fileHandle,
+            int fd,
             byte[] bytes,
             uint byteCount)
         {
-            GCHandle bytesHandle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-            try
+            unsafe
             {
-                return Interop.PrjFSLib.WriteFileContents(
-                    fileHandle,
-                    bytesHandle.AddrOfPinnedObject(),
-                    byteCount);
+                 fixed (byte* bytesPtr = bytes)
+                 {
+                     byte* bytesToWrite = bytesPtr;
+
+                     while (byteCount > 0)
+                     {
+                        long res = Syscall.write(fd, bytesToWrite, byteCount);
+                        if (res == -1)
+                        {
+                            return Result.EIOError;
+                        }
+
+                        bytesToWrite += res;
+                        byteCount -= (uint)res;
+                    }
+                }
             }
-            finally
-            {
-                bytesHandle.Free();
-            }
+
+            return Result.Success;
         }
 
         public virtual Result DeleteFile(
@@ -77,6 +102,7 @@ namespace PrjFSLib.Linux
             UpdateType updateFlags,
             out UpdateFailureCause failureCause)
         {
+            /*
             UpdateFailureCause deleteFailureCause = UpdateFailureCause.NoFailure;
             Result result = Interop.PrjFSLib.DeleteFile(
                 relativePath,
@@ -85,14 +111,15 @@ namespace PrjFSLib.Linux
 
             failureCause = deleteFailureCause;
             return result;
+            */
+            failureCause = UpdateFailureCause.NoFailure;
+            return Result.ENotYetImplemented;
         }
 
         public virtual Result WritePlaceholderDirectory(
             string relativePath)
         {
-            return Interop.PrjFSLib.WritePlaceholderDirectory(
-                this.mountHandle,
-                relativePath);
+            return this.projfs.CreateProjDir(relativePath, Convert.ToUInt32("777", 8));
         }
 
         public virtual Result WritePlaceholderFile(
@@ -100,29 +127,27 @@ namespace PrjFSLib.Linux
             byte[] providerId,
             byte[] contentId,
             ulong fileSize,
-            ushort fileMode)
+            uint fileMode)
         {
-            if (providerId.Length != Interop.PrjFSLib.PlaceholderIdLength ||
-                contentId.Length != Interop.PrjFSLib.PlaceholderIdLength)
+            if (providerId.Length != PlaceholderIdLength ||
+                contentId.Length != PlaceholderIdLength)
             {
                 throw new ArgumentException();
             }
 
-            return Interop.PrjFSLib.WritePlaceholderFile(
-                this.mountHandle,
+            return this.projfs.CreateProjFile(
                 relativePath,
-                providerId,
-                contentId,
                 fileSize,
-                fileMode);
+                fileMode,
+                providerId,
+                contentId);
         }
 
         public virtual Result WriteSymLink(
             string relativePath,
             string symLinkTarget)
         {
-            return Interop.PrjFSLib.WriteSymLink(
-                this.mountHandle,
+            return this.projfs.CreateProjSymlink(
                 relativePath,
                 symLinkTarget);
         }
@@ -132,10 +157,11 @@ namespace PrjFSLib.Linux
             byte[] providerId,
             byte[] contentId,
             ulong fileSize,
-            ushort fileMode,
+            uint fileMode,
             UpdateType updateFlags,
             out UpdateFailureCause failureCause)
         {
+            /*
             if (providerId.Length != Interop.PrjFSLib.PlaceholderIdLength ||
                 contentId.Length != Interop.PrjFSLib.PlaceholderIdLength)
             {
@@ -154,6 +180,9 @@ namespace PrjFSLib.Linux
 
             failureCause = updateFailureCause;
             return result;
+            */
+            failureCause = UpdateFailureCause.NoFailure;
+            return Result.ENotYetImplemented;
         }
 
         public virtual Result ReplacePlaceholderFileWithSymLink(
@@ -162,6 +191,7 @@ namespace PrjFSLib.Linux
             UpdateType updateFlags,
             out UpdateFailureCause failureCause)
         {
+            /*
             UpdateFailureCause updateFailureCause = UpdateFailureCause.NoFailure;
             Result result = Interop.PrjFSLib.ReplacePlaceholderFileWithSymLink(
                 relativePath,
@@ -171,6 +201,9 @@ namespace PrjFSLib.Linux
 
             failureCause = updateFailureCause;
             return result;
+            */
+            failureCause = UpdateFailureCause.NoFailure;
+            return Result.ENotYetImplemented;
         }
 
         public virtual Result CompleteCommand(
@@ -184,6 +217,150 @@ namespace PrjFSLib.Linux
             string relativeDirectoryPath)
         {
             throw new NotImplementedException();
+        }
+
+        private static string GetProcCmdline(int pid)
+        {
+            using (var stream = System.IO.File.OpenText(string.Format("/proc/{0}/cmdline", pid)))
+            {
+                string[] parts = stream.ReadToEnd().Split('\0');
+                return parts.Length > 0 ? parts[0] : string.Empty;
+            }
+        }
+
+        private static unsafe string PtrToStringUTF8(byte* ptr)
+        {
+            if (ptr == (byte*)IntPtr.Zero)
+            {
+                return null;
+            }
+
+            int length = (int)Stdlib.strlen((IntPtr)ptr);
+            return Encoding.UTF8.GetString(ptr, length);
+        }
+
+        private int HandleProjEvent(ref Interop.ProjFS.Event ev)
+        {
+            string triggeringProcessName = GetProcCmdline(ev.Pid);
+            Result result;
+
+            unsafe
+            {
+                string relativePath = PtrToStringUTF8(ev.Path);
+
+                if ((ev.Mask & Interop.ProjFS.Constants.PROJFS_ONDIR) != 0)
+                {
+                    result = this.OnEnumerateDirectory(
+                        commandId: 0,
+                        relativePath: relativePath,
+                        triggeringProcessId: ev.Pid,
+                        triggeringProcessName: triggeringProcessName);
+                }
+                else
+                {
+                    byte[] providerId = new byte[PlaceholderIdLength];
+                    byte[] contentId = new byte[PlaceholderIdLength];
+
+                    result = this.projfs.GetProjAttrs(
+                        relativePath,
+                        providerId,
+                        contentId);
+
+                    if (result == Result.Success)
+                    {
+                        result = this.OnGetFileStream(
+                            commandId: 0,
+                            relativePath: relativePath,
+                            providerId: providerId,
+                            contentId: contentId,
+                            triggeringProcessId: ev.Pid,
+                            triggeringProcessName: triggeringProcessName,
+                            fd: ev.Fd);
+                    }
+                }
+            }
+
+            return result.ConvertResultToErrno();
+        }
+
+        private int HandleNonProjEvent(ref Interop.ProjFS.Event ev, bool perm)
+        {
+            NotificationType nt;
+
+            if ((ev.Mask & Interop.ProjFS.Constants.PROJFS_DELETE_SELF) != 0)
+            {
+                nt = NotificationType.PreDelete;
+            }
+            else if ((ev.Mask & Interop.ProjFS.Constants.PROJFS_MOVE_SELF) != 0)
+            {
+                nt = NotificationType.FileRenamed;
+            }
+            else if ((ev.Mask & Interop.ProjFS.Constants.PROJFS_CREATE_SELF) != 0)
+            {
+                nt = NotificationType.NewFileCreated;
+            }
+            else
+            {
+                return 0;
+            }
+
+            bool isDirectory = (ev.Mask & Interop.ProjFS.Constants.PROJFS_ONDIR) != 0;
+            string triggeringProcessName = GetProcCmdline(ev.Pid);
+            byte[] providerId = new byte[PlaceholderIdLength];
+            byte[] contentId = new byte[PlaceholderIdLength];
+            Result result = Result.Success;
+
+            unsafe
+            {
+                string relativePath = PtrToStringUTF8(ev.Path);
+
+                if (!isDirectory)
+                {
+                    result = this.projfs.GetProjAttrs(
+                        relativePath,
+                        providerId,
+                        contentId);
+                }
+
+                if (result == Result.Success)
+                {
+                    result = this.OnNotifyOperation(
+                        commandId: 0,
+                        relativePath: relativePath,
+                        providerId: providerId,
+                        contentId: contentId,
+                        triggeringProcessId: ev.Pid,
+                        triggeringProcessName: triggeringProcessName,
+                        isDirectory: isDirectory,
+                        notificationType: nt);
+                }
+            }
+
+            int ret = result.ConvertResultToErrno();
+
+            if (perm)
+            {
+                if (ret == 0)
+                {
+                    ret = (int)Interop.ProjFS.Constants.PROJFS_ALLOW;
+                }
+                else if (ret == -(int)Errno.EPERM)
+                {
+                    ret = (int)Interop.ProjFS.Constants.PROJFS_DENY;
+                }
+            }
+
+            return ret;
+        }
+
+        private int HandleNotifyEvent(ref Interop.ProjFS.Event ev)
+        {
+            return this.HandleNonProjEvent(ref ev, false);
+        }
+
+        private int HandlePermEvent(ref Interop.ProjFS.Event ev)
+        {
+            return this.HandleNonProjEvent(ref ev, true);
         }
 
         private Result OnNotifyOperation(
